@@ -1,0 +1,57 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pytest
+.pytest_cache/
+.coverage
+
+# Data files (TOO LARGE for git)
+data/
+*.parquet
+fetcher/data/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials
+.env
+*.pem
+*.key
+config.json
+secrets.json
+.aws/
+
+# Logs
+*.log
+logs/
