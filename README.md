@@ -324,3 +324,7 @@ MIT — see `LICENSE`. Free to use, modify, redistribute. Citation appreciated.
 - **Issues:** Use GitHub Issues for code questions or bug reports
 
 For academic collaboration inquiries, contact via GitHub.
+
+## Use of AI tools
+
+AI assistants (Claude, Anthropic) supported this project: in searching the literature, in writing and testing code, in cross-checking results and in drafting and editing the text. The research question, the design of the study and the interpretation of the results are the author's; the author directed the work, reviewed its results and takes full responsibility for this repository.
