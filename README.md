@@ -2,9 +2,9 @@
 
 **Empirical transaction-cost analysis of 101 perpetual futures markets across the Hyperliquid ecosystem, December 15, 2025 — May 12, 2026.**
 
-[![Status](https://img.shields.io/badge/status-working_paper-yellow)]()
-[![Python](https://img.shields.io/badge/python-3.13-blue)]()
-[![License](https://img.shields.io/badge/license-MIT-green)]()
+![Status: working paper](https://img.shields.io/badge/status-working_paper-yellow)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue)](requirements.txt)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
@@ -23,6 +23,19 @@ This repository contains the **code and aggregated results** of a working paper 
 | Strategies tested | 5 (NAIVE_MARKET, MARKET_CAP5, TWAP_5MIN, TWAP_30MIN, VWAP_30MIN) |
 | Order size grid | 5 sizes × 2 sides per market (calibrated per liquidity tier) |
 
+## Contents
+
+- [At a Glance](#at-a-glance)
+- [Repository Layout](#repository-layout)
+- [Pipeline Architecture](#pipeline-architecture)
+- [Methodology Summary](#methodology-summary)
+- [Data Universe](#data-universe)
+- [Reproducing the Results](#reproducing-the-results)
+- [Key Implementation Details](#key-implementation-details)
+- [License](#license)
+- [Contact](#contact)
+- [Use of AI tools](#use-of-ai-tools)
+
 ---
 
 ## Repository Layout
@@ -39,10 +52,10 @@ This repository contains the **code and aggregated results** of a working paper 
 │   ├── discover_hip3.py             HIP-3 universe discovery via API
 │   ├── fetch_hip3.py                Phase 2: HIP-3 markets fetch (92 markets)
 │   ├── fetch_native_hl.py           Phase 1+: native Hyperliquid (9 markets)
-│   ├── simulator.py                 Modul 4 — order book walker
-│   ├── is_decomp.py                 Modul 5 — IS decomposition
-│   ├── aggregator.py                Modul 6 — paper tables/figures
-│   ├── aggregator_by_class.py       Modul 6.5 — by-asset-class summaries
+│   ├── simulator.py                 Module 4 — order book walker
+│   ├── is_decomp.py                 Module 5 — IS decomposition
+│   ├── aggregator.py                Module 6 — paper tables/figures
+│   ├── aggregator_by_class.py       Module 6.5 — by-asset-class summaries
 │   ├── run_is_pipeline.py           End-to-end orchestrator
 │   ├── diagnose_parquet.py          Data integrity verification
 │   ├── data_quality_check.py        QC across all assets
@@ -61,7 +74,7 @@ This repository contains the **code and aggregated results** of a working paper 
 │   ├── DATA_INTEGRITY.md            Cross-deployer namespace bug & fix
 │   └── FEE_CALIBRATION.md           Hyperliquid fee formula & verification
 ├── requirements.txt                 Python dependencies
-├── .gitignore                       Excludes data/, .venv/, secrets
+├── .gitignore                       Excludes data/, .venv/, secrets, local tool files
 ├── LICENSE                          MIT
 └── README.md                        This file
 ```
@@ -82,14 +95,14 @@ The pipeline is a **6-module sequential workflow**:
                                     │ JSON-RPC
                                     ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 1: discover_hip3.py                         │
+       │  Module 1: discover_hip3.py                        │
        │    Discovers all HIP-3 deployers + market metadata │
        │    Output: universe.csv (8 deployers, 178 markets) │
        └────────────────────┬───────────────────────────────┘
                             │
                             ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 2: fetch_hip3.py + fetch_native_hl.py       │
+       │  Module 2: fetch_hip3.py + fetch_native_hl.py      │
        │    S3 download from hydromancer-reservoir          │
        │    Memory-bounded streaming extract:               │
        │      orderbook (1-min cadence, subsample 15-min)   │
@@ -102,7 +115,7 @@ The pipeline is a **6-module sequential workflow**:
                             │
                             ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 3: build_fee_schedule.py [external]         │
+       │  Module 3: build_fee_schedule.py [external]        │
        │    Calls Hyperliquid API for live fee parameters   │
        │    Applies: scaleIfHip3, growthMode, AQA discount  │
        │    Output: hip3_fee_schedule.csv (196 entries)     │
@@ -110,7 +123,7 @@ The pipeline is a **6-module sequential workflow**:
                             │
                             ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 4: simulator.py                             │
+       │  Module 4: simulator.py                            │
        │    For each (snapshot, strategy, size, side):      │
        │      Walk order book → produce fill record         │
        │      55M total runs                                │
@@ -119,7 +132,7 @@ The pipeline is a **6-module sequential workflow**:
                             │
                             ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 5: is_decomp.py                             │
+       │  Module 5: is_decomp.py                            │
        │    Perold (1988) IS decomposition:                 │
        │      Total = Spread + Impact + Fee + Opportunity   │
        │    Per-(deployer, coin) on-chain fees from CSV     │
@@ -128,7 +141,7 @@ The pipeline is a **6-module sequential workflow**:
                             │
                             ▼
        ┌────────────────────────────────────────────────────┐
-       │  Modul 6: aggregator.py + aggregator_by_class.py   │
+       │  Module 6: aggregator.py + aggregator_by_class.py  │
        │    Per-coin × strategy × size statistics           │
        │    LaTeX tables + matplotlib figures               │
        │    Output: results/summary_stats.csv + tables/ +   │
@@ -214,7 +227,7 @@ Full details in `docs/FEE_CALIBRATION.md`.
 
 BTC, ETH, HYPE, SOL, XRP, DOGE, BNB, LINK, XMR
 
-### Cross-Listings (Identification Goldmine)
+### Cross-Listings
 
 The dataset includes **6 four-way cross-listings** (TSLA, NVDA, GOLD, SILVER, OIL, SP500) on xyz/flx/km/cash, plus **9 native-vs-HyENA cross-listings** (BTC, ETH, HYPE, SOL, XRP, DOGE, BNB, LINK, XMR), plus **1 three-way** (XMR on native+hyna+flx). These enable clean fee-delta and venue-effect identification.
 
@@ -232,7 +245,7 @@ The dataset includes **6 four-way cross-listings** (TSLA, NVDA, GOLD, SILVER, OI
 ### Setup
 
 ```bash
-git clone https://github.com/gelatotrade/implementation-shortfall-hyperliquid.git
+git clone https://github.com/grzresearch/implementation-shortfall-hyperliquid.git
 cd implementation-shortfall-hyperliquid
 python -m venv .venv
 source .venv/bin/activate          # Linux/macOS
@@ -263,7 +276,7 @@ python code/fetch_native_hl.py
 # 4. Diagnose data integrity
 python code/diagnose_parquet.py
 
-# 5. Run IS pipeline (Modul 4-6, ~90 min)
+# 5. Run IS pipeline (Module 4-6, ~90 min)
 python code/run_is_pipeline.py
 ```
 
@@ -271,6 +284,8 @@ Final output in `data/aggregator/`:
 - `summary_stats.csv` (5,050 rows)
 - `tables/*.tex`
 - `plots/*.png`
+
+By default the fetch, simulation, decomposition, aggregation and quality-check scripts read and write under `data/` in the repository. `fetch_hip3.py`, `simulator.py`, `is_decomp.py`, `aggregator.py`, `aggregator_by_class.py`, `data_quality_check.py` and `run_is_pipeline.py` accept `--data-dir PATH` for another location; `python code/run_is_pipeline.py --help` lists the remaining options (`--coins`, `--skip-simulator`, `--skip-decomp`, `--skip-aggregator`).
 
 ### Quick Inspection (no recompute)
 
@@ -286,7 +301,7 @@ open results/plots/01_is_boxplot_by_size.png
 
 ---
 
-## Key Implementation Details (For Code Reviewers)
+## Key Implementation Details
 
 ### Memory-Bounded Streaming Extract
 
