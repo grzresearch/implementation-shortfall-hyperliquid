@@ -11,7 +11,7 @@ from pathlib import Path
 
 import polars as pl
 
-BASE = Path(r"C:\Users\grego\Downloads\fetcher\data\parquet\book_snapshots")
+BASE = Path(__file__).resolve().parents[1] / "data" / "parquet" / "book_snapshots"
 
 # Coins that exist on multiple deployers (cross-listings)
 CROSS_LISTED = {

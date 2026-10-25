@@ -247,7 +247,7 @@ def fetch_one_market(coin: str, dex: str, launch_date_str: str,
 def main():
     p = argparse.ArgumentParser(description="HIP-3 Markets Fetcher v2")
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data",
+                   default=str(Path(__file__).resolve().parents[1] / "data"),
                    help="Root data directory (same as Phase 1)")
     p.add_argument("--tier", type=int, choices=[1, 2], default=None,
                    help="Only one tier (default: both)")

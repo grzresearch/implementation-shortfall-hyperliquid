@@ -57,7 +57,7 @@ NATIVE_HL_MARKETS = [
 ]
 
 
-DATA_DIR = Path(r"C:\Users\grego\Downloads\fetcher\data")
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 END_DATE = date(2026, 5, 12)
 DRY_RUN = False
 

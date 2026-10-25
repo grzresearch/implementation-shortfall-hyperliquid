@@ -506,7 +506,7 @@ def generate_latex_table(rep, out_path: Path, coins: list[str]):
 def main():
     p = argparse.ArgumentParser(description="Phase 1 Data Quality Check")
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data")
+                   default=str(Path(__file__).resolve().parents[1] / "data"))
     p.add_argument("--no-plots", action="store_true")
     args = p.parse_args()
 

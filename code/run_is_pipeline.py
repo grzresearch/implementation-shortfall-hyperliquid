@@ -44,7 +44,7 @@ def run_step(name: str, script: str, extra_args: list) -> bool:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data")
+                   default=str(Path(__file__).resolve().parents[1] / "data"))
     p.add_argument("--coins", nargs="*", default=None)
     p.add_argument("--skip-simulator", action="store_true")
     p.add_argument("--skip-decomp", action="store_true")

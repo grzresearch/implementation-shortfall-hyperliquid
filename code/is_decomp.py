@@ -49,8 +49,7 @@ FEE_HL_NATIVE = 3.5
 # Look for the fee schedule CSV in a few candidate locations
 _FEE_CSV_CANDIDATES = [
     Path(__file__).parent / "hip3_fee_schedule.csv",
-    Path(r"C:\Users\grego\Downloads\paper\hl-hip3-tca\hip3_fee_schedule.csv"),
-    Path(r"C:\Users\grego\Downloads\fetcher\hip3_fee_schedule.csv"),
+    Path(__file__).resolve().parents[1] / "results" / "hip3_fee_schedule.csv",
 ]
 _FEE_CSV = None
 for _cand in _FEE_CSV_CANDIDATES:
@@ -61,7 +60,7 @@ for _cand in _FEE_CSV_CANDIDATES:
 if _FEE_CSV is None:
     raise FileNotFoundError(
         f"hip3_fee_schedule.csv not found in any of: {_FEE_CSV_CANDIDATES}. "
-        "Copy it from the paper directory to the fetcher directory."
+        "The repository ships it as results/hip3_fee_schedule.csv."
     )
 
 log.info("Loading per-(dex,coin) fee schedule from: %s", _FEE_CSV)
@@ -187,7 +186,7 @@ def build_post_window_lookup(con: duckdb.DuckDBPyConnection) -> dict:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data")
+                   default=str(Path(__file__).resolve().parents[1] / "data"))
     args = p.parse_args()
 
     data_root = Path(args.data_dir)

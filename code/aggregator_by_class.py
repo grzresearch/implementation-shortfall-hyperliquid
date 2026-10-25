@@ -671,7 +671,7 @@ def write_summary_csv(df: pd.DataFrame, out_path: Path):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data")
+                   default=str(Path(__file__).resolve().parents[1] / "data"))
     args = p.parse_args()
 
     data_root = Path(args.data_dir)

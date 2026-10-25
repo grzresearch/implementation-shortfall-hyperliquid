@@ -405,7 +405,7 @@ def run_simulator_for_coin(con, coin: str, sizes: list, out_writer):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir",
-                   default=r"C:\Users\grego\Downloads\fetcher\data")
+                   default=str(Path(__file__).resolve().parents[1] / "data"))
     p.add_argument("--coins", nargs="*", default=None,
                    help="Only run these coins (default: all detected)")
     args = p.parse_args()
