@@ -328,7 +328,7 @@ def plot_completion_by_size(df: pd.DataFrame, out: Path):
         sizes = sorted(sub["order_size_usd"].unique())
         data = [sub[sub["order_size_usd"] == sz]["fill_completion_pct"].values
                 for sz in sizes]
-        bp = ax.boxplot(data, labels=[fmt_size(s) for s in sizes],
+        bp = ax.boxplot(data, tick_labels=[fmt_size(s) for s in sizes],
                           patch_artist=True, showfliers=False)
         for patch in bp["boxes"]:
             patch.set_facecolor(PALETTE.get(coin, "#888"))
