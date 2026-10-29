@@ -1,0 +1,65 @@
+# Deploys the live execution-cost dashboard (site/) to GitHub Pages.
+# Enable once under Settings → Pages → Source: "GitHub Actions".
+name: Deploy live dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'results/summary_stats.csv'
+      - 'results/hip3_fee_schedule.csv'
+      - 'tests/web/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Cost-engine parity tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fee engine vs. results/hip3_fee_schedule.csv, book walker vs. code/simulator.py
+        run: node --test tests/web/*.test.mjs
+
+  build:
+    name: Stage site
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy the static site and the research results it benchmarks against
+        run: |
+          mkdir -p _site/data
+          cp -R site/. _site/
+          cp results/summary_stats.csv results/hip3_fee_schedule.csv _site/data/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -23,9 +23,16 @@ This repository contains the **code and aggregated results** of a working paper 
 | Strategies tested | 5 (NAIVE_MARKET, MARKET_CAP5, TWAP_5MIN, TWAP_30MIN, VWAP_30MIN) |
 | Order size grid | 5 sizes × 2 sides per market (calibrated per liquidity tier) |
 
+## Live Dashboard
+
+**https://grzresearch.github.io/implementation-shortfall-hyperliquid/**
+
+The paper's cost engine, running on the live order book. For every native and HIP-3 perpetual market the dashboard shows the order-book depth, the effective maker and taker fees under a configurable trader profile, and the all-in cost of every Hyperliquid order type (market, limit IOC/GTC/ALO, chase, scale, stop and take-profit variants, native TWAP) plus the paper's strategies, next to the paper's historical medians. A CLOB visualisation illustrates the depth of the selected market. The book walker and the fee engine are JavaScript ports of `code/simulator.py` and `docs/FEE_CALIBRATION.md`, held to parity by `tests/web/`. See [`docs/LIVE_DASHBOARD.md`](docs/LIVE_DASHBOARD.md) for the method and [`site/README.md`](site/README.md) for the code.
+
 ## Contents
 
 - [At a Glance](#at-a-glance)
+- [Live Dashboard](#live-dashboard)
 - [Repository Layout](#repository-layout)
 - [Pipeline Architecture](#pipeline-architecture)
 - [Methodology Summary](#methodology-summary)
@@ -72,7 +79,13 @@ This repository contains the **code and aggregated results** of a working paper 
 ├── docs/                            Methodology deep-dives
 │   ├── ARCHITECTURE.md              Pipeline architecture & design decisions
 │   ├── DATA_INTEGRITY.md            Cross-deployer namespace bug & fix
-│   └── FEE_CALIBRATION.md           Hyperliquid fee formula & verification
+│   ├── FEE_CALIBRATION.md           Hyperliquid fee formula & verification
+│   └── LIVE_DASHBOARD.md            Live dashboard: cost model, data flow, deployment
+├── site/                            Live dashboard (static, GitHub Pages)
+│   ├── index.html, css/, js/        Cost engine ports + CLOB visualisation
+│   └── README.md                    Local preview and module map
+├── tests/web/                       Parity tests: fee engine vs. CSV, book walker vs. simulator.py
+├── .github/workflows/pages.yml      Tests, stages site + results, deploys to Pages
 ├── requirements.txt                 Python dependencies
 ├── .gitignore                       Excludes data/, .venv/, secrets, local tool files
 ├── LICENSE                          MIT
