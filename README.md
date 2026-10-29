@@ -184,7 +184,7 @@ where:
 - `growthModeScale = 0.1` if growth mode enabled, else `1`
 - For USDH-aligned markets, AQA discount applies: `aqaDiscount = (1 − deployerShare) × 0.8 + deployerShare`
 
-Trader profile: **Tier 2 institutional** (volume ≥ $5M, ≤ $25M / 14-day rolling), no HYPE staking, no referral. This biases against HIP-3 (gives no fee advantage from lower tiers). Robustness checks sweep Tier 0–3 with/without staking.
+Trader profile: **Tier 2 institutional** (14-day weighted volume > $25M, ≤ $100M), no HYPE staking, no referral. This biases against HIP-3 (gives no fee advantage from lower tiers). Robustness checks sweep Tier 0–3 with/without staking.
 
 Full details in `docs/FEE_CALIBRATION.md`.
 

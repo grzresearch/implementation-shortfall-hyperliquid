@@ -45,8 +45,8 @@ per-market values.
 
 ## Trader Profile Assumption
 
-Baseline: Tier 2 institutional (14-day volume between 5M and 25M USD), no
-HYPE staking, no referral discount.
+Baseline: Tier 2 institutional (14-day weighted volume above 25M USD, up
+to 100M USD), no HYPE staking, no referral discount.
 
 This is intentionally conservative - it biases against HIP-3 by giving
 them no fee advantage from lower tiers. Robustness checks sweep:
