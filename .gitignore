@@ -25,6 +25,8 @@ dist/
 
 # Data files (TOO LARGE for git)
 data/
+# Deploy-time copies of results/ for the live dashboard (see .github/workflows/pages.yml)
+site/data/
 *.parquet
 fetcher/data/
 

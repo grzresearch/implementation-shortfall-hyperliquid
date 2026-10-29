@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hyperliquid Execution Cost Monitor</title>
+  <meta name="description" content="Live order-book depth and all-in execution cost per order type for every Hyperliquid and HIP-3 perpetual market, computed with the implementation-shortfall engine of the research pipeline.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1a19'/%3E%3Cpath d='M4 24h10V12H4zM18 24h10V6H18z' fill='%232a78d6'/%3E%3Cpath d='M18 24h10V6H18z' fill='%23e34948'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Hyperliquid Execution Cost Monitor</h1>
+      <p class="tagline">Live order-book depth and the all-in cost of every order type across native and HIP-3 perpetuals, computed with the implementation-shortfall engine of the <a href="https://github.com/grzresearch/implementation-shortfall-hyperliquid">research pipeline</a>.</p>
+    </div>
+    <div class="status" id="status" aria-live="polite">
+      <span class="pill" id="st-ws" data-state="idle">WebSocket connecting…</span>
+      <span class="pill" id="st-rest">REST –</span>
+      <span class="pill" id="st-books">Books –</span>
+      <span class="pill muted" id="st-updated"></span>
+      <span class="pill err" id="st-err"></span>
+    </div>
+    <div class="actions">
+      <button type="button" id="theme-toggle" class="btn">Theme: auto</button>
+      <a class="btn" href="https://github.com/grzresearch/implementation-shortfall-hyperliquid">GitHub</a>
+    </div>
+  </header>
+
+  <p id="banner" class="banner" hidden></p>
+
+  <section class="filters" aria-label="Filters">
+    <input id="search" type="search" placeholder="Search market or deployer…" aria-label="Search markets" autocomplete="off">
+    <div id="dex-chips" class="chips" aria-label="Deployers"></div>
+    <select id="class-filter" aria-label="Asset class"></select>
+    <label class="ctl">
+      <span class="ctl-label">Order size $</span>
+      <input id="size-input" type="text" inputmode="decimal" size="8" aria-label="Order size in USD">
+      <select id="size-presets" aria-label="Order size presets"></select>
+    </label>
+    <label class="ctl">
+      <span class="ctl-label">Depth band</span>
+      <select id="band-select" aria-label="Depth band in basis points"></select>
+    </label>
+    <button type="button" id="profile-btn" class="btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="profile-popover">Profile</button>
+    <label class="ctl check"><input type="checkbox" id="show-delisted"> <span>show delisted</span></label>
+  </section>
+
+  <main class="layout">
+    <section class="card table-card" aria-label="All markets">
+      <div class="table-head">
+        <h2>All markets</h2>
+        <span class="muted" id="table-count">loading…</span>
+      </div>
+      <div class="table-wrap">
+        <table id="market-table" class="market-table"></table>
+      </div>
+      <p class="note">Costs are bps of filled notional for a market order of the selected size, relative to the arrival mid: spread + impact + taker fee. “≥” marks orders larger than the 20 visible levels (lower bound). Click a column to sort, a row to inspect.</p>
+    </section>
+    <aside class="detail" id="detail" aria-label="Selected market"></aside>
+  </main>
+
+  <footer class="foot">
+    <p><strong>Method.</strong> For each market the live L2 book (20 levels per side) is walked exactly as <code>code/simulator.py</code> does, and the cost is decomposed as in <code>code/is_decomp.py</code>: spread (crossing the touch), impact (walking the book) and fee (effective taker rate). Opportunity cost needs the post-trade price path and is only available in the paper. Maker rows assume the order is filled and earn the half-spread versus the arrival mid; adverse selection is not priced. Fees follow the published Hyperliquid formula with growth mode, deployer fee scale and quote asset read live per market; the trader profile is yours to set.</p>
+    <p><strong>Data.</strong> <code>api.hyperliquid.xyz</code> info endpoint and WebSocket, queried directly from your browser within the public rate limit. Paper benchmarks come from <code>results/summary_stats.csv</code> (101 markets, 15 Dec 2025 – 12 May 2026). See <a href="https://github.com/grzresearch/implementation-shortfall-hyperliquid/blob/main/docs/LIVE_DASHBOARD.md">docs/LIVE_DASHBOARD.md</a> and <a href="https://github.com/grzresearch/implementation-shortfall-hyperliquid/blob/main/docs/FEE_CALIBRATION.md">docs/FEE_CALIBRATION.md</a>. Not investment advice.</p>
+  </footer>
+
+  <div id="profile-popover" class="popover" role="dialog" aria-label="Trader profile" hidden>
+    <h3>Trader profile</h3>
+    <label class="field"><span>VIP tier (14-day volume)</span><select id="p-tier"></select></label>
+    <label class="field"><span>HYPE staking discount</span><select id="p-staking"></select></label>
+    <label class="field"><span>Maker rebate tier</span><select id="p-rebate"></select></label>
+    <label class="field check"><input type="checkbox" id="p-referral"><span>Referred user (4 % discount on the first $25M)</span></label>
+    <label class="field"><span>Builder fee (bps, added to every fill)</span><input id="p-builder" type="number" min="0" step="0.1" value="0"></label>
+    <p class="note">The paper's baseline is Tier 2 without staking or referral. The profile is remembered in this browser.</p>
+  </div>
+</body>
+</html>
