@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -57,27 +57,3 @@ secrets.json
 # Logs
 *.log
 logs/
-
-# tool configuration and working notes that do not belong in the repository
-.claude/
-.cursor/
-.aider*
-.continue/
-.windsurf/
-.codeium/
-.copilot/
-.github/copilot-instructions.md
-.cursorrules
-.windsurfrules
-CLAUDE.md
-CLAUDE.local.md
-AGENTS.md
-GEMINI.md
-**/HANDOVER*.md
-**/UEBERGABE*.md
-/SESSION*.md
-/PROMPT*.md
-**/*.prompt.md
-/prompts/
-/chat-logs/
-/transcripts/
