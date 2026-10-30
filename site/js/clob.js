@@ -26,12 +26,12 @@ function text(parent, x, y, str, attrs = {}) {
 }
 
 export const PRECISIONS = [
-  { value: 'auto', label: 'Combined · full precision + aggregated beyond' },
-  { value: 'fine', label: 'Full precision · 20 levels only' },
-  { value: '5', label: 'Aggregated · 5 significant figures' },
-  { value: '4', label: 'Aggregated · 4 significant figures' },
-  { value: '3', label: 'Aggregated · 3 significant figures' },
-  { value: '2', label: 'Aggregated · 2 significant figures' },
+  { value: 'auto', label: 'Combined (full + aggregated)' },
+  { value: 'fine', label: 'Full precision (20 levels)' },
+  { value: '5', label: 'Aggregated · 5 sig. figures' },
+  { value: '4', label: 'Aggregated · 4 sig. figures' },
+  { value: '3', label: 'Aggregated · 3 sig. figures' },
+  { value: '2', label: 'Aggregated · 2 sig. figures' },
 ];
 
 function describePrecision(p, book) {
@@ -54,6 +54,29 @@ function niceUsdTicks(maxUsd, n = 4) {
   const ticks = [];
   for (let v = step; v <= maxUsd; v += step) ticks.push(v);
   return ticks;
+}
+
+/**
+ * Position a tooltip next to an SVG point. The SVG is laid out in viewBox units but displayed
+ * at CSS width, so coordinates are scaled; the tip is measured at left 0 so its natural width
+ * is not capped by the previous position, and it flips to the other side when it would not fit.
+ */
+export function placeTip(tip, svgEl, geom, cx, cy) {
+  tip.hidden = false;
+  tip.style.left = '0px';
+  tip.style.top = '0px';
+  const rect = svgEl.getBoundingClientRect();
+  const scale = rect.width && geom.W ? rect.width / geom.W : 1;
+  const offX = svgEl.offsetLeft || 0, offY = svgEl.offsetTop || 0;
+  const tw = tip.offsetWidth || 160, th = tip.offsetHeight || 60;
+  const px = offX + cx * scale, py = offY + cy * scale;
+  const plotRight = offX + (geom.L + geom.plotW) * scale;
+  let left = px + 12 + tw > plotRight ? px - tw - 12 : px + 12;
+  let topPos = py - th / 2;
+  if (left < 0) { left = Math.max(0, px - tw / 2); topPos = py + 14; } // neither side fits: go below the point
+  const maxTop = offY + (geom.top + geom.plotH) * scale - th;
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(Math.max(0, Math.min(topPos, maxTop)))}px`;
 }
 
 export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
@@ -151,11 +174,7 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
       el('span', 'tip-val', r, v);
       el('span', 'tip-key', r, k);
     }
-    tip.hidden = false;
-    const tw = tip.offsetWidth || 160;
-    const left = cx + 12 + tw > L + plotW ? cx - tw - 12 : cx + 12;
-    tip.style.left = `${Math.max(0, left)}px`;
-    tip.style.top = `${Math.max(0, Math.min(cy - 10, top + plotH - 80))}px`;
+    placeTip(tip, svgRoot, geom, cx, cy);
   }
 
   function draw() {
@@ -185,7 +204,7 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
     const maxUsd = Math.max(1, depthMax) * 1.08;
     const x = (bps) => L + ((bps + maxBps) / (2 * maxBps)) * plotW;
     const y = (usd) => T + plotH - (usd / maxUsd) * plotH;
-    geom = { x, y, top: T, plotH, plotW, L, mid, bids, asks };
+    geom = { x, y, top: T, plotH, plotW, L, W, mid, bids, asks };
 
     // grid + axes
     const grid = svg('g', { class: 'grid' }, svgRoot);
@@ -235,6 +254,7 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
         svg('line', { x1: L, x2: L + plotW, y1: y(size), y2: y(size), class: 'orderline' }, svgRoot);
         text(svgRoot, L + plotW - 4, y(size) - 4, `order ${fmtSizeLabel(size)}`, { 'text-anchor': 'end', class: 'label muted' });
       }
+      const CHAR_W = 6.3; // ≈ width of an 11 px system-font character, used to keep labels on their own side
       const overlay = (res, levels, cls, labelY, name) => {
         if (!res || !(res.filledUsd > 0) || !levels.length) return;
         const full = res.coverage >= 0.999;
@@ -245,11 +265,20 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
         const x0 = x(levels[0].bps), x1 = x(endBps);
         svg('rect', { x: Math.min(x0, x1), y: T, width: Math.abs(x1 - x0), height: plotH, class: `band ${cls}` }, svgRoot);
         svg('line', { x1, x2: x1, y1: T, y2: T + plotH, class: `marker ${cls}` }, svgRoot);
-        const label = full
-          ? `${name}: VWAP ${res.deepestAgg ? '≈ ' : ''}${fmtPx(res.vwap)} · ${fmtBps(res.spreadBps + res.impactBps, 1)} bps${beyond ? ' · ends beyond this view' : ''}`
+        const costTxt = `${fmtBps(res.spreadBps + res.impactBps, 1)} bps`;
+        const longLabel = full
+          ? `${name}: VWAP ${res.deepestAgg ? '≈ ' : ''}${fmtPx(res.vwap)} · ${costTxt}${beyond ? ' · ends beyond this view' : ''}`
           : `${name}: ${(res.coverage * 100).toFixed(0)} % fillable in the visible book`;
-        text(svgRoot, cls === 'ask' ? Math.min(x1 + 6, L + plotW - 4) : Math.max(x1 - 6, L + 4), labelY, label,
-          { 'text-anchor': cls === 'ask' ? (x1 + 6 + 160 > L + plotW ? 'end' : 'start') : (x1 - 6 - 160 < L ? 'start' : 'end'), class: 'label' });
+        const shortLabel = full ? `${name}: ${res.deepestAgg ? '≈ ' : ''}${costTxt}` : `${name}: ${(res.coverage * 100).toFixed(0)} % fillable`;
+        const half = plotW / 2 - 10;
+        const label = longLabel.length * CHAR_W <= half ? longLabel : shortLabel;
+        const w = Math.min(label.length * CHAR_W, half);
+        // Each label stays on its own side of the mid, as close to its marker as the space allows.
+        const xMid = x(0);
+        let lx, anchor;
+        if (cls === 'ask') { lx = Math.min(Math.max(x1 + 6, xMid + 4), L + plotW - 4 - w); anchor = 'start'; }
+        else { lx = Math.max(Math.min(x1 - 6, xMid - 4), L + 4 + w); anchor = 'end'; }
+        text(svgRoot, lx, labelY, label, { 'text-anchor': anchor, class: 'label' });
       };
       overlay(data.buy, asks, 'ask', T + 14, `Buy ${fmtSizeLabel(size)}`);
       overlay(data.sell, bids, 'bid', T + 30, `Sell ${fmtSizeLabel(size)}`);
@@ -257,14 +286,16 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
 
     svgRoot.append(hoverLayer);
     const hit = svg('rect', { x: L, y: T, width: plotW, height: plotH, class: 'hit' }, svgRoot);
-    hit.addEventListener('pointermove', (ev) => {
+    const onPointer = (ev) => {
       const r = svgRoot.getBoundingClientRect();
       const px = (ev.clientX - r.left) * (W / r.width);
       const bps = ((px - L) / plotW) * 2 * maxBps - maxBps;
       hover = levelAt(bps);
       drawHover();
-    });
-    hit.addEventListener('pointerleave', () => { hover = null; drawHover(); });
+    };
+    hit.addEventListener('pointermove', onPointer);
+    hit.addEventListener('pointerdown', onPointer); // taps have no move event
+    hit.addEventListener('pointerleave', (ev) => { if (ev.pointerType !== 'touch') { hover = null; drawHover(); } });
     drawHover();
 
     const sumSide = (levels, name, sign) => {
@@ -280,8 +311,9 @@ export function createClob(root, { onPrecisionChange, onViewChange } = {}) {
     const order = [...geom.bids.map((_, i) => ({ side: 'bids', idx: i })).reverse(), ...geom.asks.map((_, i) => ({ side: 'asks', idx: i }))];
     if (!order.length) return;
     let pos = hover ? order.findIndex((o) => o.side === hover.side && o.idx === hover.idx) : -1;
-    if (ev.key === 'ArrowRight') pos = Math.min(order.length - 1, pos + 1);
-    else if (ev.key === 'ArrowLeft') pos = Math.max(0, pos < 0 ? geom.bids.length : pos - 1);
+    // From nothing selected, Right starts at the best ask and Left at the best bid.
+    if (ev.key === 'ArrowRight') pos = pos < 0 ? Math.min(order.length - 1, geom.bids.length) : Math.min(order.length - 1, pos + 1);
+    else if (ev.key === 'ArrowLeft') pos = pos < 0 ? Math.max(0, geom.bids.length - 1) : Math.max(0, pos - 1);
     else if (ev.key === 'Escape') { hover = null; drawHover(); return; }
     else return;
     ev.preventDefault();

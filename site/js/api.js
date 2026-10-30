@@ -1,12 +1,12 @@
 // Hyperliquid API access: a REST client that respects the published weight budget
 // and a WebSocket client with a subscription registry that survives reconnects.
-import { API, RATE } from './config.js';
+import { API, RATE, WS } from './config.js';
 
 class WeightMeter {
   constructor(windowMs, cap) { this.windowMs = windowMs; this.cap = cap; this.events = []; }
   _prune(now) { while (this.events.length && this.events[0].t < now - this.windowMs) this.events.shift(); }
   used(now = Date.now()) { this._prune(now); return this.events.reduce((s, e) => s + e.w, 0); }
-  canSpend(w, now = Date.now()) { return this.used(now) + w <= this.cap; }
+  canSpend(w, now = Date.now(), reserve = 0) { return this.used(now) + w <= this.cap - reserve; }
   record(w, now = Date.now()) { this.events.push({ t: now, w }); }
 }
 
@@ -22,7 +22,10 @@ export class RestClient {
   get usedWeight() { return this.meter.used(); }
   get budget() { return this.meter.cap; }
   get backedOff() { return Date.now() < this.backoffUntil; }
-  canSpend(type) { return !this.backedOff && this.meter.canSpend(this.weightFor(type)); }
+  /** Whether a request of this type fits the budget, optionally keeping `reserve` weight free. */
+  canSpend(type, reserve = 0) { return !this.backedOff && this.meter.canSpend(this.weightFor(type), Date.now(), reserve); }
+  /** Whether `count` requests of this type fit right now. */
+  canSpendMany(type, count) { return !this.backedOff && this.meter.canSpend(this.weightFor(type) * count); }
 
   async info(body) {
     const w = this.weightFor(body.type);
@@ -84,6 +87,7 @@ export class WsClient {
     this.backoffMs = 1000;
     this.pingTimer = null;
     this.reconnectTimer = null;
+    this.stableTimer = null;
     this.closedByUser = false;
     this.stats = { messages: 0, reconnects: 0, lastMessageAt: 0 };
   }
@@ -98,22 +102,31 @@ export class WsClient {
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () => {
-      this.backoffMs = 1000;
       this._setStatus('live');
+      this.stats.lastMessageAt = Date.now();
       for (const { sub } of this.subs.values()) this._send({ method: 'subscribe', subscription: sub });
+      // The backoff is only reset once the connection has proven itself, so a server that
+      // accepts and immediately drops connections cannot turn this into a reconnect storm.
+      clearTimeout(this.stableTimer);
+      this.stableTimer = setTimeout(() => { if (this.ws === ws) this.backoffMs = 1000; }, WS.stableAfterMs);
       clearInterval(this.pingTimer);
-      this.pingTimer = setInterval(() => this._send({ method: 'ping' }), 50_000);
+      this.pingTimer = setInterval(() => {
+        if (Date.now() - this.stats.lastMessageAt > WS.staleMs) { ws.close(); return; } // half-open socket: force the reconnect path
+        this._send({ method: 'ping' });
+      }, WS.pingMs);
     };
     ws.onmessage = (ev) => this._onMessage(ev);
     ws.onerror = () => { /* the close handler schedules the reconnect */ };
     ws.onclose = () => {
       clearInterval(this.pingTimer);
+      clearTimeout(this.stableTimer);
       if (this.ws !== ws) return;
       this.ws = null;
       if (this.closedByUser) { this._setStatus('closed'); return; }
       this._setStatus('reconnecting');
       this.stats.reconnects++;
-      this.reconnectTimer = setTimeout(() => this.connect(), this.backoffMs);
+      const jitter = 0.8 + Math.random() * 0.4;
+      this.reconnectTimer = setTimeout(() => this.connect(), Math.round(this.backoffMs * jitter));
       this.backoffMs = Math.min(this.backoffMs * 2, 30_000);
     };
   }
@@ -121,6 +134,7 @@ export class WsClient {
   close() {
     this.closedByUser = true;
     clearInterval(this.pingTimer);
+    clearTimeout(this.stableTimer);
     clearTimeout(this.reconnectTimer);
     this.ws?.close();
   }
@@ -138,13 +152,17 @@ export class WsClient {
     try { msg = JSON.parse(ev.data); } catch { return; }
     this.stats.messages++;
     this.stats.lastMessageAt = Date.now();
+    if (!msg || typeof msg !== 'object') return;
     const { channel, data } = msg;
-    if (!channel || channel === 'pong' || channel === 'subscriptionResponse') return;
+    if (typeof channel !== 'string' || channel === 'pong' || channel === 'subscriptionResponse') return;
     if (channel === 'error') { console.warn('[ws] error', data); return; }
-    // Coin feeds route by coin; coin-less feeds (allMids per dex) go to every subscriber of that type.
-    const targets = data?.coin
-      ? [this.subs.get(`${channel}|${data.coin}`)].filter(Boolean)
-      : [...this.subs.values()].filter((e) => e.sub.type === channel);
+    // Coin feeds route by coin, per-dex feeds by dex, the native allMids by its bare type;
+    // only a message carrying none of these goes to every subscriber of that type.
+    let targets;
+    if (data && typeof data === 'object' && data.coin) targets = [this.subs.get(`${channel}|${data.coin}`)].filter(Boolean);
+    else if (data && typeof data === 'object' && data.dex) targets = [this.subs.get(`${channel}|dex:${data.dex}`)].filter(Boolean);
+    else if (this.subs.has(channel)) targets = [this.subs.get(channel)];
+    else targets = [...this.subs.values()].filter((e) => e.sub.type === channel);
     for (const entry of targets) {
       for (const h of entry.handlers) {
         try { h(data, msg); } catch (err) { console.error('[ws] handler failed', err); }

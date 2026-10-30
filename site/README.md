@@ -22,6 +22,10 @@ sends `Access-Control-Allow-Origin: *`). Nothing is proxied or stored server-sid
 node --test tests/web/*.test.mjs
 ```
 
+They run in CI on every push and pull request that touches `site/`,
+`tests/web/`, `code/simulator.py` or the fee schedule
+(`.github/workflows/web-tests.yml`), and again before every deployment.
+
 `fees.test.mjs` re-derives every row of `results/hip3_fee_schedule.csv` from
 `js/fees.js`; `book.test.mjs` runs the JavaScript book walker against the Python
 functions extracted from `code/simulator.py` (needs `python3`).
@@ -41,4 +45,6 @@ functions extracted from `code/simulator.py` (needs `python3`).
 | `js/curve.js` | Cost-vs-size curve with the paper's medians overlaid |
 | `js/detail.js` | Selected-market panel: KPIs, order-type costs, paper benchmark, fee derivation |
 | `js/paper.js` | Parses `results/summary_stats.csv` |
-| `js/app.js` | Orchestration: universe load, sweep scheduler, streams, rendering |
+| `js/state.js` | Store, trader profile and theme in `localStorage` (normalised on load), selected market in the URL hash |
+| `js/format.js` | Number, bps, USD and size formatting; size-input parsing |
+| `js/app.js` | Orchestration: universe load, leader election across tabs, sweep scheduler, streams, rendering |

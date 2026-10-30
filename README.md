@@ -69,7 +69,7 @@ The paper's cost engine, running on the live order book. For every native and HI
 │   └── run_fetch.py                 Phase 1 entry point
 ├── results/                         Aggregated outputs (committed)
 │   ├── summary_stats.csv            5,050 rows × 14 cols (master output)
-│   ├── hip3_fee_schedule.csv        196 (deployer, coin) effective taker fees
+│   ├── hip3_fee_schedule.csv        178 (deployer, coin) effective taker fees
 │   ├── tables/                      4 LaTeX tables ready for paper inclusion
 │   │   ├── main_results.tex
 │   │   ├── decomposition.tex
@@ -131,7 +131,7 @@ The pipeline is a **6-module sequential workflow**:
        │  Module 3: build_fee_schedule.py [external]        │
        │    Calls Hyperliquid API for live fee parameters   │
        │    Applies: scaleIfHip3, growthMode, AQA discount  │
-       │    Output: hip3_fee_schedule.csv (196 entries)     │
+       │    Output: hip3_fee_schedule.csv (178 entries)     │
        └────────────────────┬───────────────────────────────┘
                             │
                             ▼

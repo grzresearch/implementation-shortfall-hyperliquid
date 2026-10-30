@@ -57,13 +57,13 @@
       <div class="table-wrap">
         <table id="market-table" class="market-table"></table>
       </div>
-      <p class="note">Costs are bps of filled notional for a market order of the selected size, relative to the arrival mid: spread + impact + taker fee. “≥” marks orders larger than the 20 visible levels (lower bound). Click a column to sort, a row to inspect.</p>
+      <p class="note">Costs are bps of filled notional for a market order of the selected size, relative to the arrival mid: spread + impact + taker fee. “≈” marks a cost that reaches into aggregated buckets beyond the 20 full-precision levels (exact inside them, upper bound beyond); “≥” marks an order larger than the whole visible book (cost of the fillable part). Click a column to sort, a row to inspect.</p>
     </section>
     <aside class="detail" id="detail" aria-label="Selected market"></aside>
   </main>
 
   <footer class="foot">
-    <p><strong>Method.</strong> For each market the live L2 book (20 levels per side) is walked exactly as <code>code/simulator.py</code> does, and the cost is decomposed as in <code>code/is_decomp.py</code>: spread (crossing the touch), impact (walking the book) and fee (effective taker rate). Opportunity cost needs the post-trade price path and is only available in the paper. Maker rows assume the order is filled and earn the half-spread versus the arrival mid; adverse selection is not priced. Fees follow the published Hyperliquid formula with growth mode, deployer fee scale and quote asset read live per market; the trader profile is yours to set.</p>
+    <p><strong>Method.</strong> For each market the live L2 book (20 full-precision levels per side, extended by an aggregated book for the depth beyond them) is walked exactly as <code>code/simulator.py</code> does, and the cost is decomposed as in <code>code/is_decomp.py</code>: spread (crossing the touch), impact (walking the book) and fee (effective taker rate). Opportunity cost needs the post-trade price path and is only available in the paper. Maker rows assume the order is filled and earn the half-spread versus the arrival mid; adverse selection is not priced. Fees follow the published Hyperliquid formula with growth mode, deployer fee scale and quote asset read live per market; the trader profile is yours to set.</p>
     <p><strong>Data.</strong> <code>api.hyperliquid.xyz</code> info endpoint and WebSocket, queried directly from your browser within the public rate limit. Paper benchmarks come from <code>results/summary_stats.csv</code> (101 markets, 15 Dec 2025 – 12 May 2026). See <a href="https://github.com/grzresearch/implementation-shortfall-hyperliquid/blob/main/docs/LIVE_DASHBOARD.md">docs/LIVE_DASHBOARD.md</a> and <a href="https://github.com/grzresearch/implementation-shortfall-hyperliquid/blob/main/docs/FEE_CALIBRATION.md">docs/FEE_CALIBRATION.md</a>. Not investment advice.</p>
   </footer>
 

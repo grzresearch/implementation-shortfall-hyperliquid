@@ -1,5 +1,5 @@
 # Deploys the live execution-cost dashboard (site/) to GitHub Pages.
-# Enable once under Settings → Pages → Source: "GitHub Actions".
+# One-time setup: Settings → Pages → Source: "GitHub Actions".
 name: Deploy live dashboard
 
 on:
@@ -15,8 +15,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -48,7 +46,6 @@ jobs:
           mkdir -p _site/data
           cp -R site/. _site/
           cp results/summary_stats.csv results/hip3_fee_schedule.csv _site/data/
-      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
@@ -57,6 +54,9 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

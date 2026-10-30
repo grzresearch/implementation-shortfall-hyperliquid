@@ -7,38 +7,53 @@ export const API = {
 };
 
 // REST budget: 1200 weight per minute per IP (Hyperliquid docs, "Rate limits").
-// l2Book and allMids cost 2, every other documented info request costs 20. The soft cap
-// leaves a third of the budget for a second tab, the server's own accounting and retries.
+// l2Book and allMids cost 2, every other documented info request costs 20. Every request
+// of this page goes through one sliding meter capped at `softCap`; the sweep additionally
+// keeps `sweepReserve` free for the selected market's polls and the context refresh.
 export const RATE = {
   windowMs: 60_000,
   budget: 1200,
   softCap: 800,
+  sweepReserve: 120,
   weights: { l2Book: 2, allMids: 2, default: 20 },
   backoffOn429Ms: 15_000,
 };
 
-// The sweep refreshes one order book per tick, stalest-first.
-// 4 books/s × weight 2 = 480 weight/min, well inside the soft cap.
+// The sweep refreshes one order book per tick, stalest-first (visible rows first, every
+// fourth tick the hidden ones). 4 books/s × weight 2 = 480 weight/min at most; with the
+// context refresh (≈110/min) and the selected-market polls (≤ 80/min) one tab stays
+// under ~700 of the 800 soft cap. Only one tab per browser profile runs at this pace
+// (Web Locks leader election); other tabs follow at `followerTickMs` and skip the bbo feed.
 export const SWEEP = {
-  tickMs: 150,
+  tickMs: 250,
+  followerTickMs: 1_000,
+  hiddenShareEvery: 4,
   minRefreshMs: 12_000,
   ctxRefreshMs: 120_000,
+  followerCtxRefreshMs: 240_000,
   hiddenTabTickMs: 2_000,
   selectedPollMs: 3_000,
   freshMs: 180_000,
+  agePulseMs: 5_000,
 };
+
+// WebSocket keep-alive: ping every 50 s, treat 90 s of silence as a dead connection.
+export const WS = { pingMs: 50_000, staleMs: 90_000, stableAfterMs: 10_000, lockName: 'hl-cost-monitor.sweeper' };
 
 // The 20 full-precision levels of a tight-tick market span only a few bps. Every market
 // therefore also gets an aggregated book (nSigFigs) when its full book reaches less than
-// COARSE_NEEDED_BELOW_BPS; the aggregation is the finest one spanning ≥ COARSE_MIN_SPAN_BPS.
-export const COARSE_MIN_SPAN_BPS = 25;
+// COARSE_NEEDED_BELOW_BPS; the aggregation is the finest one whose 20 buckets span at least
+// COARSE_MIN_SPAN_BPS. A 4-significant-figure book always spans 20–200 bps, so 20 selects
+// nSigFigs = 4 for every price (buckets of 1–10 bps).
+export const COARSE_MIN_SPAN_BPS = 20;
 export const COARSE_NEEDED_BELOW_BPS = 100;
 
 // l2Book returns at most 20 levels per side; the cost figures are bounded by that.
 export const BOOK_LEVELS = 20;
 
-// Quote assets that qualify for the aligned-quote-asset discount
-// (20 % lower taker fees, 50 % better maker rebates — see docs/FEE_CALIBRATION.md).
+// Quote assets that qualify for the aligned-quote-asset discount: 20 % lower taker fees and
+// 50 % better maker rebates (Hyperliquid docs → Trading → Fees, "Aligned quote assets";
+// the taker side is also derived in docs/FEE_CALIBRATION.md).
 export const ALIGNED_QUOTE_TOKENS = new Set(['USDH']);
 
 export const SIZE_PRESETS = [1_000, 10_000, 50_000, 100_000, 250_000, 1_000_000, 5_000_000, 10_000_000];
