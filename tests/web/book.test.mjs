@@ -124,6 +124,18 @@ test('makerCost captures the half-spread and charges the maker fee', () => {
   assert.ok(close(rebate.totalBps, -100 - 25 - 0.2));
 });
 
+test('applyBbo ignores malformed, crossed or stale updates', () => {
+  const book = parseBook({ time: 100, levels: [[{ px: '99', sz: '1' }, { px: '98', sz: '1' }], [{ px: '101', sz: '1' }, { px: '102', sz: '1' }]] });
+  assert.equal(applyBbo(book, [{ px: 'abc', sz: '1' }, { px: '101', sz: '1' }]).bids.length, 2, 'bad bid ignored, good ask applied');
+  assert.equal(applyBbo(book, [5, null]), book, 'non-object levels ignored');
+  assert.equal(applyBbo(book, [{ px: '0', sz: '0' }, null]), book, 'zero price ignored');
+  assert.equal(applyBbo(book, [{ px: '101.5', sz: '1' }, { px: '101', sz: '1' }]), book, 'crossed pair ignored');
+  assert.equal(applyBbo(book, [{ px: '99.5', sz: '1' }, null], 50), book, 'older than the book ignored');
+  const ok = applyBbo(book, [{ px: '99.5', sz: '2' }, null], 150);
+  assert.equal(ok.bids[0].px, 99.5);
+  assert.equal(ok.time, 150);
+});
+
 test('depthWithin and applyBbo', () => {
   const book = parseBook({ levels: [
     [{ px: '99.9', sz: '1' }, { px: '99.5', sz: '2' }, { px: '98', sz: '3' }],
@@ -143,6 +155,11 @@ test('depthWithin and applyBbo', () => {
 
 test('aggregation helpers: bucketSize and chooseSigFigs', async () => {
   const { bucketSize, chooseSigFigs } = await import('../../site/js/book.js');
+  const { COARSE_MIN_SPAN_BPS } = await import('../../site/js/config.js');
+  // The configured span must select 4 significant figures for every price (buckets of 1–10 bps).
+  for (const px of [0.0123, 0.85, 1.01, 9.9, 90.9, 401.5, 1136, 2326, 8000, 81075, 99999, 100000]) {
+    assert.equal(chooseSigFigs(px, COARSE_MIN_SPAN_BPS), 4, `configured span picks 4 sf at ${px}`);
+  }
   assert.equal(bucketSize(80451, 4), 10);
   assert.equal(bucketSize(401.5, 3), 1);
   assert.ok(close(bucketSize(0.0123, 3), 0.0001));
@@ -154,7 +171,7 @@ test('aggregation helpers: bucketSize and chooseSigFigs', async () => {
   // 4 significant figures always span 20–200 bps, so a wider target falls back to coarser books
   assert.equal(chooseSigFigs(1136, 300), 3);   // $10 buckets → 1,760 bps
   assert.equal(chooseSigFigs(90.9, 300), 2);   // 3 sf would span only 220 bps
-  assert.equal(chooseSigFigs(NaN), 3);
+  assert.equal(chooseSigFigs(NaN), 4);
 });
 
 test('stitchBooks appends aggregated buckets net of the fine quantity they contain', async () => {

@@ -1,0 +1,35 @@
+# Runs the dashboard's parity tests on every push and pull request that can affect them,
+# including changes to the Python reference the book walker is compared against.
+name: Dashboard parity tests
+
+on:
+  push:
+    paths:
+      - 'site/**'
+      - 'tests/web/**'
+      - 'code/simulator.py'
+      - 'results/hip3_fee_schedule.csv'
+      - '.github/workflows/web-tests.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'tests/web/**'
+      - 'code/simulator.py'
+      - 'results/hip3_fee_schedule.csv'
+      - '.github/workflows/web-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --test tests/web/*.test.mjs

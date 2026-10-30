@@ -1,5 +1,6 @@
 // A tiny store plus the two pieces of persistence the page needs.
 import { DEFAULT_PROFILE } from './config.js';
+import { TIERS, STAKING, MAKER_REBATE_TIERS } from './fees.js';
 
 export function createStore(initial) {
   let state = { ...initial };
@@ -36,9 +37,23 @@ function writeJson(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode or blocked storage */ }
 }
 
+/** Coerce anything (localStorage, a URL, a future schema) into a valid trader profile. */
+export function normalizeProfile(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const tier = Number(src.tier);
+  const rebate = Number(src.rebateTier);
+  const builder = Number(src.builderBps);
+  return {
+    tier: TIERS.some((t) => t.tier === tier) ? tier : DEFAULT_PROFILE.tier,
+    staking: STAKING.some((s) => s.id === src.staking) ? src.staking : DEFAULT_PROFILE.staking,
+    referral: src.referral === true,
+    rebateTier: MAKER_REBATE_TIERS.some((r) => r.tier === rebate) ? rebate : DEFAULT_PROFILE.rebateTier,
+    builderBps: Number.isFinite(builder) ? Math.min(Math.max(builder, 0), 100) : DEFAULT_PROFILE.builderBps,
+  };
+}
+
 export function loadProfile() {
-  const saved = readJson(PROFILE_KEY);
-  return { ...DEFAULT_PROFILE, ...(saved && typeof saved === 'object' ? saved : {}) };
+  return normalizeProfile(readJson(PROFILE_KEY));
 }
 export function saveProfile(profile) { writeJson(PROFILE_KEY, profile); }
 

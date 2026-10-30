@@ -76,7 +76,11 @@ export function paperKeyFor(dexName, base) {
   return `${dexName || 'hyperliquid'}__${base}`;
 }
 
-function toNum(v) { const n = Number(v); return Number.isFinite(n) ? n : NaN; }
+function toNum(v) {
+  if (v == null || v === '') return NaN; // Number(null) is 0, which would print a mid of "0"
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
 
 export function ctxFromRaw(c, now) {
   if (!c) return null;
@@ -101,65 +105,91 @@ function applyMeta(market, u) {
   market.marginMode = u.marginMode ?? null;
 }
 
+function newMarket(dex, u, ctx, nativeNames) {
+  const name = u.name;
+  const base = dex.name && name.startsWith(dex.name + ':') ? name.slice(dex.name.length + 1) : name;
+  const cls = classify(dex.name, base, nativeNames);
+  const m = {
+    name, base, dex: dex.name, dexLabel: dex.label, dexFullName: dex.fullName, isHip3: Boolean(dex.name),
+    quote: dex.quote, aligned: dex.aligned, cls, sizeGrid: sizeGridFor(base, cls), paperKey: paperKeyFor(dex.name, base),
+    ctx, book: null, bookAt: 0, bookRequestedAt: 0, bookSource: null,
+    bookCoarse: null, bookCoarseAt: 0, coarseRequestedAt: 0, bookAgg: null, stitchCache: null,
+  };
+  applyMeta(m, u);
+  return m;
+}
+
+/** Create or update the markets of one dex from a metaAndAssetCtxs payload. Returns the new market names. */
+function ingestDex(universe, dex, payload, now) {
+  const [meta, ctxs] = payload;
+  const collateralIdx = meta.collateralToken ?? 0;
+  dex.quote = universe.tokens.get(collateralIdx) ?? (dex.name ? `token#${collateralIdx}` : 'USDC');
+  dex.aligned = ALIGNED_QUOTE_TOKENS.has(dex.quote);
+  dex.failed = false;
+  let live = 0, delisted = 0;
+  const added = [];
+  (meta.universe ?? []).forEach((u, j) => {
+    let m = universe.markets.get(u.name);
+    const ctx = ctxFromRaw(ctxs?.[j], now);
+    if (!m) {
+      m = newMarket(dex, u, ctx, universe.nativeNames);
+      universe.markets.set(u.name, m);
+      added.push(u.name);
+    } else {
+      applyMeta(m, u);
+      if (ctx) m.ctx = ctx;
+      m.quote = dex.quote; m.aligned = dex.aligned;
+    }
+    if (m.isDelisted) delisted++; else live++;
+  });
+  dex.liveCount = live; dex.delistedCount = delisted;
+  return added;
+}
+
 /**
  * Load every perp dex and its markets.
- * @returns {{ dexes: Array, markets: Map<string, object>, tokens: Map<number,string> }}
+ * @returns {{ dexes: Array, markets: Map<string, object>, tokens: Map<number,string>, nativeNames: Set<string>, warnings: string[] }}
  */
 export async function loadUniverse(rest) {
-  const [dexList, spot] = await Promise.all([rest.perpDexs(), rest.spotMeta()]);
+  const warnings = [];
+  const [dexList, spot] = await Promise.all([
+    rest.perpDexs(),
+    rest.spotMeta().catch((err) => { warnings.push(`spotMeta failed (${err.message}); collateral tokens shown by index`); return null; }),
+  ]);
   const tokens = new Map((spot?.tokens ?? []).map((t) => [t.index, t.name]));
+  if (!tokens.size) tokens.set(0, 'USDC');
   const dexes = [{ ...NATIVE_DEX, raw: null }];
   for (const d of dexList ?? []) {
     if (!d || !d.name) continue;
     dexes.push({ name: d.name, label: d.name, fullName: d.fullName || d.name, raw: d });
   }
   const payloads = await Promise.all(dexes.map((d) => rest.metaAndAssetCtxs(d.name).catch((err) => { console.warn('meta failed', d.name, err); return null; })));
-  const markets = new Map();
+  const universe = { dexes, markets: new Map(), tokens, nativeNames: new Set(), warnings };
+  universe.nativeNames = new Set((payloads[0]?.[0]?.universe ?? []).map((u) => u.name.toUpperCase()));
   const now = Date.now();
-  const nativeNames = new Set((payloads[0]?.[0]?.universe ?? []).map((u) => u.name.toUpperCase()));
   dexes.forEach((dex, i) => {
-    const payload = payloads[i];
-    if (!payload) { dex.liveCount = 0; dex.delistedCount = 0; dex.failed = true; return; }
-    const [meta, ctxs] = payload;
-    const collateralIdx = meta.collateralToken ?? 0;
-    dex.quote = tokens.get(collateralIdx) ?? (dex.name ? `token#${collateralIdx}` : 'USDC');
-    dex.aligned = ALIGNED_QUOTE_TOKENS.has(dex.quote);
-    let live = 0, delisted = 0;
-    (meta.universe ?? []).forEach((u, j) => {
-      const name = u.name;
-      const base = dex.name && name.startsWith(dex.name + ':') ? name.slice(dex.name.length + 1) : name;
-      const cls = classify(dex.name, base, nativeNames);
-      const m = {
-        name, base, dex: dex.name, dexLabel: dex.label, dexFullName: dex.fullName, isHip3: Boolean(dex.name),
-        quote: dex.quote, aligned: dex.aligned, cls, sizeGrid: sizeGridFor(base, cls), paperKey: paperKeyFor(dex.name, base),
-        ctx: ctxFromRaw(ctxs?.[j], now),
-        book: null, bookAt: 0, bookRequestedAt: 0, bookSource: null,
-        bookCoarse: null, bookCoarseAt: 0, bookAgg: null, stitchCache: null,
-      };
-      applyMeta(m, u);
-      if (m.isDelisted) delisted++; else live++;
-      markets.set(name, m);
-    });
-    dex.liveCount = live; dex.delistedCount = delisted;
+    if (!payloads[i]) { dex.liveCount = 0; dex.delistedCount = 0; dex.failed = true; warnings.push(`${dex.fullName}: market list failed to load, retrying in the background`); return; }
+    ingestDex(universe, dex, payloads[i], now);
   });
-  return { dexes, markets, tokens };
+  if (!universe.markets.size) throw new Error('no market list could be loaded');
+  return universe;
 }
 
-/** Refresh contexts (mark, OI, volume, funding) and the fee parameters for every dex. */
+/**
+ * Refresh contexts (mark, OI, volume, funding) and the fee parameters for every dex;
+ * a dex that failed to load earlier is ingested now. Returns the names of newly added markets.
+ */
 export async function refreshContexts(rest, universe) {
   const now = Date.now();
+  const added = [];
   await Promise.all(universe.dexes.map(async (dex) => {
     let payload;
     try { payload = await rest.metaAndAssetCtxs(dex.name); } catch (err) { console.warn('ctx refresh failed', dex.name, err); return; }
-    const [meta, ctxs] = payload;
-    (meta.universe ?? []).forEach((u, j) => {
-      const m = universe.markets.get(u.name);
-      if (!m) return;
-      applyMeta(m, u);
-      const ctx = ctxFromRaw(ctxs?.[j], now);
-      if (ctx) m.ctx = ctx;
-    });
+    if (!Array.isArray(payload) || !payload[0]) return;
+    if (!universe.nativeNames.size && !dex.name) universe.nativeNames = new Set((payload[0].universe ?? []).map((u) => u.name.toUpperCase()));
+    added.push(...ingestDex(universe, dex, payload, now));
   }));
+  return added;
 }
 
 /** The book used for costs and depth: full precision stitched with the aggregated book. */

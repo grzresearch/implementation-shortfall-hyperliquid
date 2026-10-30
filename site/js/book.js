@@ -214,22 +214,32 @@ export function bookStats(book, bands) {
   return out;
 }
 
-/** Fold a bbo update into a stored book: replaces the top-of-book, trims crossed levels. */
-export function applyBbo(book, bbo) {
-  if (!book || !bbo) return book;
-  const [bid, ask] = bbo;
-  const next = { ...book, bids: book.bids.slice(), asks: book.asks.slice(), time: Math.max(book.time, bbo.time || 0) };
+function validLevel(l) {
+  if (!l || typeof l !== 'object') return null;
+  const px = Number(l.px), sz = Number(l.sz), n = Number(l.n) || 0;
+  return Number.isFinite(px) && px > 0 && Number.isFinite(sz) && sz > 0 ? { px, sz, n } : null;
+}
+
+/**
+ * Fold a bbo update into a stored book: replaces the top-of-book, trims crossed levels.
+ * Malformed levels are ignored; a crossed pair (bid ≥ ask) is ignored as a whole.
+ */
+export function applyBbo(book, bbo, time = 0) {
+  if (!book || !Array.isArray(bbo)) return book;
+  if (time && book.time && time < book.time) return book;
+  const bid = validLevel(bbo[0]), ask = validLevel(bbo[1]);
+  if (!bid && !ask) return book;
+  if (bid && ask && bid.px >= ask.px) return book;
+  const next = { ...book, bids: book.bids.slice(), asks: book.asks.slice(), time: Math.max(book.time || 0, time || 0) };
   if (bid) {
-    const px = Number(bid.px), sz = Number(bid.sz), n = Number(bid.n) || 0;
-    next.bids = next.bids.filter((l) => l.px < px);
-    next.bids.unshift({ px, sz, n });
-    next.asks = next.asks.filter((l) => l.px > px);
+    next.bids = next.bids.filter((l) => l.px < bid.px);
+    next.bids.unshift(bid);
+    next.asks = next.asks.filter((l) => l.px > bid.px);
   }
   if (ask) {
-    const px = Number(ask.px), sz = Number(ask.sz), n = Number(ask.n) || 0;
-    next.asks = next.asks.filter((l) => l.px > px);
-    next.asks.unshift({ px, sz, n });
-    next.bids = next.bids.filter((l) => l.px < px);
+    next.asks = next.asks.filter((l) => l.px > ask.px);
+    next.asks.unshift(ask);
+    next.bids = next.bids.filter((l) => l.px < ask.px);
   }
   return next;
 }
@@ -243,11 +253,15 @@ export function bucketSize(px, nSigFigs) {
   return 10 ** (Math.floor(Math.log10(px)) - (nSigFigs - 1));
 }
 
-/** Finest aggregation whose 20 levels span at least minSpanBps from the touch. */
-export function chooseSigFigs(px, minSpanBps = 25) {
-  if (!(px > 0)) return 3;
+/**
+ * Finest aggregation whose 20 levels span more than minSpanBps from the touch.
+ * 4 significant figures span 20–200 bps for every price (5 span 2–20), so the default
+ * threshold of 20 bps selects nSigFigs = 4 everywhere, with buckets of 1–10 bps.
+ */
+export function chooseSigFigs(px, minSpanBps = 20) {
+  if (!(px > 0)) return 4;
   for (const n of [5, 4, 3, 2]) {
-    if ((20 * bucketSize(px, n)) / px * 1e4 >= minSpanBps) return n;
+    if ((20 * bucketSize(px, n)) / px * 1e4 > minSpanBps) return n;
   }
   return 2;
 }

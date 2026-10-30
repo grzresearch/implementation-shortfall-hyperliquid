@@ -1,6 +1,8 @@
 // Market-order cost versus order size: the paper's slippage curve, computed live.
 import { fmtBps, fmtSizeLabel } from './format.js';
 import { execCost } from './book.js';
+import { placeTip } from './clob.js';
+import { costMarker } from './table.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs = {}, parent) {
@@ -21,10 +23,11 @@ function text(parent, x, y, str, attrs = {}) { const t = svg('text', { x, y, ...
 function niceTicks(max, n = 4) {
   const raw = max / n;
   const mag = 10 ** Math.floor(Math.log10(raw || 1));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? mag * 10;
+  const step = Number(([1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? mag * 10).toPrecision(12));
   const ticks = [];
-  for (let v = 0; v <= max + 1e-9; v += step) ticks.push(v);
-  return ticks;
+  for (let i = 0; i * step <= max + 1e-9; i++) ticks.push(Number((i * step).toPrecision(12)));
+  const digits = (String(step).split('.')[1] || '').length; // every label on an axis shares the step's precision
+  return { ticks, digits };
 }
 
 export function createCurve(root, { onViewChange } = {}) {
@@ -34,10 +37,12 @@ export function createCurve(root, { onViewChange } = {}) {
   el('h3', null, titleWrap, 'Market-order cost vs. size');
   const sub = el('span', 'viz-sub', titleWrap, 'spread + impact + taker fee, bps of filled notional');
   const legend = el('div', 'legend', head);
-  for (const [cls, label] of [['ask line', 'Live buy'], ['bid line', 'Live sell'], ['ask hollow', 'Partly fillable (lower bound)'], ['paper', 'Paper median (NAIVE_MARKET)']]) {
+  const legendItems = {};
+  for (const [id, cls, label] of [['buy', 'ask line', 'Live buy'], ['sell', 'bid line', 'Live sell'], ['partial', 'ask hollow', 'Partly fillable'], ['paperBuy', 'diamond ask', 'Paper median buy'], ['paperSell', 'diamond bid', 'Paper median sell']]) {
     const item = el('span', 'legend-item', legend);
     el('span', `swatch ${cls}`, item);
     el('span', null, item, label);
+    legendItems[id] = item;
   }
   const controls = el('div', 'viz-controls', head);
   const seg = el('div', 'seg', controls);
@@ -52,7 +57,7 @@ export function createCurve(root, { onViewChange } = {}) {
   const svgRoot = svg('svg', { class: 'curve-svg', role: 'img', 'aria-label': 'Execution cost in basis points against order size' }, chartWrap);
   const tip = el('div', 'viz-tip', chartWrap);
   tip.hidden = true;
-  const tableWrap = el('div', 'curve-table', root);
+  const tableWrap = el('div', 'table-scroll curve-table', root);
   tableWrap.hidden = true;
   const table = el('table', 'data-table', tableWrap);
   const thead = table.createTHead();
@@ -72,8 +77,8 @@ export function createCurve(root, { onViewChange } = {}) {
       const sell = book ? execCost({ side: 'SELL', book, sizeUsd: s, takerBps: fees.takerBps }) : null;
       return {
         size: s,
-        buy: buy?.totalBps ?? NaN, buyCov: buy?.coverage ?? NaN,
-        sell: sell?.totalBps ?? NaN, sellCov: sell?.coverage ?? NaN,
+        buy: buy?.totalBps ?? NaN, buyCov: buy?.coverage ?? NaN, buyAgg: Boolean(buy?.deepestAgg),
+        sell: sell?.totalBps ?? NaN, sellCov: sell?.coverage ?? NaN, sellAgg: Boolean(sell?.deepestAgg),
         paperBuy: paper?.cell('NAIVE_MARKET', 'BUY', s)?.median ?? NaN,
         paperSell: paper?.cell('NAIVE_MARKET', 'SELL', s)?.median ?? NaN,
       };
@@ -85,7 +90,7 @@ export function createCurve(root, { onViewChange } = {}) {
     hoverLayer.replaceChildren();
     if (hoverIdx < 0 || !geom || !series) { tip.hidden = true; return; }
     const p = series[hoverIdx];
-    const { x, y, top, plotH, L, plotW } = geom;
+    const { x, y, top, plotH } = geom;
     const cx = x(p.size);
     svg('line', { x1: cx, x2: cx, y1: top, y2: top + plotH, class: 'crosshair' }, hoverLayer);
     tip.replaceChildren();
@@ -98,13 +103,10 @@ export function createCurve(root, { onViewChange } = {}) {
       if (!Number.isFinite(v)) continue;
       const r = el('div', 'tip-row', tip);
       el('span', `key ${cls}`, r);
-      el('span', 'tip-val', r, `${Number.isFinite(cov) && cov < 0.999 ? '≥ ' : ''}${fmtBps(v, 2)} bps`);
+      el('span', 'tip-val', r, `${costMarker(cov, p[cls === 'ask' ? 'buyAgg' : 'sellAgg'] && cls !== 'paper')}${fmtBps(v, 2)} bps`);
       el('span', 'tip-key', r, k);
     }
-    tip.hidden = false;
-    const tw = tip.offsetWidth || 160;
-    tip.style.left = `${cx + 12 + tw > L + plotW ? cx - tw - 12 : cx + 12}px`;
-    tip.style.top = `${top + 8}px`;
+    placeTip(tip, svgRoot, geom, cx, y(Math.max(...[p.buy, p.sell, p.paperBuy, p.paperSell].filter(Number.isFinite))));
   }
 
   function draw() {
@@ -128,12 +130,13 @@ export function createCurve(root, { onViewChange } = {}) {
     const yMax = Math.max(...vals) * 1.12 || 1;
     const x = (s) => L + ((Math.log10(s) - lx0) / (lx1 - lx0 || 1)) * plotW;
     const y = (v) => T + plotH - (v / yMax) * plotH;
-    geom = { x, y, top: T, plotH, L, plotW };
+    geom = { x, y, top: T, plotH, L, plotW, W };
 
     const grid = svg('g', { class: 'grid' }, svgRoot);
-    for (const v of niceTicks(yMax)) {
+    const { ticks, digits } = niceTicks(yMax);
+    for (const v of ticks) {
       svg('line', { x1: L, x2: L + plotW, y1: y(v), y2: y(v) }, grid);
-      text(grid, L - 8, y(v) + 4, fmtBps(v, v < 10 ? 1 : 0), { 'text-anchor': 'end', class: 'tick' });
+      text(grid, L - 8, y(v) + 4, fmtBps(v, digits), { 'text-anchor': 'end', class: 'tick' });
     }
     svg('line', { x1: L, x2: L + plotW, y1: T + plotH, y2: T + plotH, class: 'axis' }, svgRoot);
     const every = sizes.length > 9 ? 2 : 1;
@@ -172,25 +175,27 @@ export function createCurve(root, { onViewChange } = {}) {
     }
     svgRoot.append(hoverLayer);
     const hit = svg('rect', { x: L, y: T, width: plotW, height: plotH, class: 'hit' }, svgRoot);
-    hit.addEventListener('pointermove', (ev) => {
+    const onPointer = (ev) => {
       const r = svgRoot.getBoundingClientRect();
       const px = (ev.clientX - r.left) * (W / r.width);
       let best = -1, bestD = Infinity;
       series.forEach((p, i) => { const d = Math.abs(x(p.size) - px); if (d < bestD) { bestD = d; best = i; } });
       hoverIdx = best;
       drawHover();
-    });
-    hit.addEventListener('pointerleave', () => { hoverIdx = -1; drawHover(); });
+    };
+    hit.addEventListener('pointermove', onPointer);
+    hit.addEventListener('pointerdown', onPointer);
+    hit.addEventListener('pointerleave', (ev) => { if (ev.pointerType !== 'touch') { hoverIdx = -1; drawHover(); } });
     drawHover();
   }
 
   function drawTable() {
     series = compute();
     tbody.replaceChildren();
-    const cell = (v, cov) => (Number.isFinite(v) ? `${Number.isFinite(cov) && cov < 0.999 ? '≥ ' : ''}${fmtBps(v, 2)}` : '–');
+    const cell = (v, cov, agg) => (Number.isFinite(v) ? costMarker(cov, agg) + fmtBps(v, 2) : '–');
     for (const p of series) {
       const tr = tbody.insertRow();
-      for (const v of [fmtSizeLabel(p.size), cell(p.buy, p.buyCov), cell(p.sell, p.sellCov), cell(p.paperBuy, 1), cell(p.paperSell, 1)]) tr.insertCell().textContent = v;
+      for (const v of [fmtSizeLabel(p.size), cell(p.buy, p.buyCov, p.buyAgg), cell(p.sell, p.sellCov, p.sellAgg), cell(p.paperBuy, 1, false), cell(p.paperSell, 1, false)]) tr.insertCell().textContent = v;
     }
   }
 
@@ -199,6 +204,7 @@ export function createCurve(root, { onViewChange } = {}) {
       last = data;
       sub.textContent = data.paper ? `spread + impact + taker fee · paper medians from ${data.paperPeriod}` : 'spread + impact + taker fee, bps of filled notional';
       for (const [id, b] of Object.entries(btns)) b.classList.toggle('active', id === (data.view ?? 'chart'));
+      legendItems.paperBuy.hidden = legendItems.paperSell.hidden = !data.paper;
       const isTable = data.view === 'table';
       chartWrap.hidden = isTable;
       tableWrap.hidden = !isTable;

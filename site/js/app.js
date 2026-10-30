@@ -1,17 +1,18 @@
 // Application orchestration: load the universe, keep every book fresh within the
 // API budget, stream the selected market, and render the table and the detail panel.
-import { SWEEP, SIZE_PRESETS, DEPTH_BANDS_BPS, PAPER, COARSE_MIN_SPAN_BPS, COARSE_NEEDED_BELOW_BPS } from './config.js';
+import { SWEEP, RATE, WS, SIZE_PRESETS, DEPTH_BANDS_BPS, PAPER, COARSE_MIN_SPAN_BPS, COARSE_NEEDED_BELOW_BPS } from './config.js';
 import { RestClient, WsClient } from './api.js';
 import { loadUniverse, refreshContexts, ctxFromRaw, effectiveBook, ASSET_CLASSES } from './universe.js';
 import { feeRates, TIERS, STAKING, MAKER_REBATE_TIERS } from './fees.js';
 import { parseBook, applyBbo, midOf, reachBps, chooseSigFigs } from './book.js';
-import { createStore, loadProfile, saveProfile, loadTheme, saveTheme, readHash, writeHash } from './state.js';
+import { createStore, loadProfile, saveProfile, normalizeProfile, loadTheme, saveTheme, readHash, writeHash } from './state.js';
 import { createTable, rowModel } from './table.js';
 import { createDetail } from './detail.js';
 import { loadPaper } from './paper.js';
 import { fmtSizeLabel, parseSizeInput } from './format.js';
 
 const $ = (id) => document.getElementById(id);
+const stackedLayout = window.matchMedia('(max-width: 1100px)');
 
 const rest = new RestClient();
 const ws = new WsClient({ onStatus: () => { statusDirty = true; } });
@@ -38,26 +39,16 @@ let visibleNames = [];
 let liveNames = [];
 let selectedUnsubs = [];
 let selectedPollTimer = null;
+let ctxTimer = null;
+let role = 'leader'; // 'leader' runs the full sweep and the bbo feed; 'follower' tabs go slow
+const bboUnsubs = new Map();
 const coarseQueue = [];
 let tableDirty = true, detailDirty = true, statusDirty = true;
 let detailRaf = 0;
 let lastDetailAt = 0;
+let tickCount = 0;
 
-const table = createTable($('market-table'), {
-  onSelect: (name) => select(name),
-  onSort: (key) => {
-    const { sort } = store.get();
-    const dir = sort.key === key ? (sort.dir === 'desc' ? 'asc' : 'desc') : (key === 'name' ? 'asc' : 'desc');
-    store.set({ sort: { key, dir } });
-  },
-});
-
-const detail = createDetail($('detail'), {
-  onPrecisionChange: (p) => store.set({ precision: p }),
-  onClobViewChange: (v) => store.set({ clobView: v }),
-  onCurveViewChange: (v) => store.set({ curveView: v }),
-  onSideChange: (s) => store.set({ side: s }),
-});
+let table, detail;
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -68,17 +59,18 @@ function applyTheme() {
   else document.documentElement.dataset.theme = theme;
   $('theme-toggle').textContent = { auto: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' }[theme];
 }
-$('theme-toggle').addEventListener('click', () => {
-  const next = { auto: 'light', light: 'dark', dark: 'auto' }[store.get().theme];
-  store.set({ theme: next });
-  saveTheme(next);
-  applyTheme();
-});
 
 // ---------------------------------------------------------------------------
 // Filter row
 // ---------------------------------------------------------------------------
 function wireFilters() {
+  $('theme-toggle').addEventListener('click', () => {
+    const next = { auto: 'light', light: 'dark', dark: 'auto' }[store.get().theme];
+    store.set({ theme: next });
+    saveTheme(next);
+    applyTheme();
+  });
+
   const search = $('search');
   search.addEventListener('input', () => store.set({ search: search.value }));
 
@@ -97,9 +89,10 @@ function wireFilters() {
   sizeInput.value = fmtSizeLabel(store.get().sizeUsd).replace('$', '');
   const commitSize = (v) => {
     if (!(v > 0)) { sizeInput.value = fmtSizeLabel(store.get().sizeUsd).replace('$', ''); return; }
-    store.set({ sizeUsd: v });
-    sizeInput.value = fmtSizeLabel(v).replace('$', '');
-    sizeSel.value = SIZE_PRESETS.includes(v) ? String(v) : '';
+    const size = Math.min(v, 1e11);
+    store.set({ sizeUsd: size });
+    sizeInput.value = fmtSizeLabel(size).replace('$', '');
+    sizeSel.value = SIZE_PRESETS.includes(size) ? String(size) : '';
   };
   sizeInput.addEventListener('change', () => commitSize(parseSizeInput(sizeInput.value)));
   sizeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitSize(parseSizeInput(sizeInput.value)); } });
@@ -112,6 +105,7 @@ function wireFilters() {
   bandSel.addEventListener('change', () => store.set({ bandBps: Number(bandSel.value) }));
 
   const delisted = $('show-delisted');
+  delisted.checked = store.get().showDelisted;
   delisted.addEventListener('change', () => store.set({ showDelisted: delisted.checked }));
 
   wireProfile();
@@ -128,14 +122,14 @@ function wireProfile() {
     const p = store.get().profile;
     tierSel.value = String(p.tier); stakeSel.value = p.staking; rebateSel.value = String(p.rebateTier);
     refChk.checked = Boolean(p.referral); builderIn.value = String(p.builderBps ?? 0);
-    const tier = TIERS[p.tier] ?? TIERS[0];
+    const tier = TIERS.find((t) => t.tier === p.tier) ?? TIERS[0];
     btn.textContent = `Profile: ${tier.label.split(' · ')[0]}${p.staking !== 'none' ? ' · staking' : ''}${p.referral ? ' · referral' : ''}${p.rebateTier ? ' · rebate' : ''}${p.builderBps ? ` · +${p.builderBps} bps builder` : ''}`;
   };
   const commit = () => {
-    const profile = {
+    const profile = normalizeProfile({
       tier: Number(tierSel.value), staking: stakeSel.value, rebateTier: Number(rebateSel.value),
-      referral: refChk.checked, builderBps: Math.max(0, Number(builderIn.value) || 0),
-    };
+      referral: refChk.checked, builderBps: Number(builderIn.value),
+    });
     store.set({ profile });
     saveProfile(profile);
     sync();
@@ -155,33 +149,46 @@ function wireProfile() {
   sync();
 }
 
+// Deployer chips are created once and updated in place, so focus survives a toggle.
+const dexChips = new Map();
 function buildDexChips() {
   const wrap = $('dex-chips');
-  wrap.replaceChildren();
-  const mk = (label, title, active, onClick, extraCls = '') => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = `chip-btn${active ? ' active' : ''}${extraCls ? ' ' + extraCls : ''}`;
-    b.textContent = label;
-    b.title = title;
-    b.setAttribute('aria-pressed', String(active));
-    b.addEventListener('click', onClick);
-    wrap.append(b);
+  const { dexFilter, showDelisted } = store.get();
+  const ensure = (key, onClick) => {
+    let b = dexChips.get(key);
+    if (!b) {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.addEventListener('click', onClick);
+      wrap.append(b);
+      dexChips.set(key, b);
+    }
+    return b;
   };
-  const { dexFilter } = store.get();
-  mk('All', 'Every deployer', !dexFilter, () => store.set({ dexFilter: null }));
+  const allBtn = ensure('*', () => store.set({ dexFilter: null }));
+  allBtn.textContent = 'All';
+  allBtn.title = 'Every deployer';
+  allBtn.className = `chip-btn${!dexFilter ? ' active' : ''}`;
+  allBtn.setAttribute('aria-pressed', String(!dexFilter));
   for (const d of universe.dexes) {
-    const dead = d.liveCount === 0;
-    const label = `${d.label} ${dead ? `· ${d.delistedCount} delisted` : d.liveCount}`;
-    const title = `${d.fullName} · ${d.liveCount} live, ${d.delistedCount} delisted · quoted in ${d.quote ?? '?'}`;
-    mk(label, title, dexFilter?.has(d.name) ?? false, () => {
+    const b = ensure(d.name || '*native*', () => {
       const cur = new Set(store.get().dexFilter ?? []);
       if (cur.has(d.name)) cur.delete(d.name); else cur.add(d.name);
       const patch = { dexFilter: cur.size ? cur : null };
-      if (dead && cur.has(d.name)) patch.showDelisted = true;
+      if (d.liveCount === 0 && !d.failed && cur.has(d.name)) patch.showDelisted = true;
       store.set(patch);
-    }, dead ? 'archived' : '');
+    });
+    const dead = d.liveCount === 0 && !d.failed;
+    b.textContent = d.failed ? `${d.label} · failed to load` : `${d.label} ${dead ? `· ${d.delistedCount} delisted` : d.liveCount}`;
+    b.title = d.failed
+      ? `${d.fullName} · the market list could not be loaded; retried every ${Math.round(SWEEP.ctxRefreshMs / 60000)} min`
+      : `${d.fullName} · ${d.liveCount} live, ${d.delistedCount} delisted · quoted in ${d.quote ?? '?'}`;
+    const active = dexFilter?.has(d.name) ?? false;
+    b.className = `chip-btn${active ? ' active' : ''}${dead ? ' archived' : ''}${d.failed ? ' failed' : ''}`;
+    b.setAttribute('aria-pressed', String(active));
   }
+  const delisted = $('show-delisted');
+  if (delisted.checked !== showDelisted) delisted.checked = showDelisted;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +213,8 @@ function renderTable() {
   if (!universe) return;
   const s = store.get();
   visibleNames = table.update(filteredRows(), { sort: s.sort, selected: s.selected, sizeUsd: s.sizeUsd, bandBps: s.bandBps });
-  $('table-count').textContent = `${visibleNames.length} of ${liveNames.length} live markets${s.showDelisted ? ' (delisted shown)' : ''}`;
+  const total = s.showDelisted ? universe.markets.size : liveNames.length;
+  $('table-count').textContent = `${visibleNames.length} of ${total} ${s.showDelisted ? 'markets (incl. delisted)' : 'live markets'}`;
   tableDirty = false;
 }
 
@@ -215,9 +223,9 @@ function displayBookFor(m, precision) {
   if (precision === 'fine') return m.book;
   if (precision === 'auto') return effectiveBook(m);
   const n = Number(precision);
-  if (m.bookAgg?.nSigFigs === n) return m.bookAgg;
-  if (m.bookCoarse?.nSigFigs === n) return m.bookCoarse;
-  return null;
+  const candidates = [m.bookAgg, m.bookCoarse].filter((b) => b && b.nSigFigs === n);
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (b.time > a.time ? b : a)); // the fresher of the two
 }
 
 function renderDetail() {
@@ -252,14 +260,25 @@ function renderStatus() {
   $('st-rest').textContent = `REST ${rest.usedWeight}/${rest.budget} weight per min${rest.backedOff ? ' · backing off' : ''}`;
   $('st-ws').textContent = `WebSocket ${ws.status} · ${ws.subscriptionCount} subscriptions`;
   $('st-ws').dataset.state = ws.status;
-  $('st-books').textContent = `Books ${fresh}/${liveNames.length} fresh (< ${Math.round(SWEEP.freshMs / 60000)} min)`;
-  $('st-err').textContent = rest.recentError ? `${rest.recentError} · ${rest.stats.errors} errors so far` : '';
+  $('st-books').textContent = `Books ${fresh}/${liveNames.length} fresh (< ${Math.round(SWEEP.freshMs / 60000)} min)${role === 'follower' ? ' · slow sweep, another tab leads' : ''}`;
+  const failed = universe.dexes.filter((d) => d.failed).map((d) => d.fullName);
+  const err = rest.recentError ? `${rest.recentError} · ${rest.stats.errors} errors so far` : '';
+  $('st-err').textContent = failed.length ? `${failed.join(', ')}: market list not loaded yet${err ? ' · ' + err : ''}` : err;
   statusDirty = false;
 }
 
 // ---------------------------------------------------------------------------
 // Books: full precision plus an aggregated book for depth beyond 20 levels
 // ---------------------------------------------------------------------------
+/** Store a fine book unless it is older than the one we already have. */
+function acceptBook(m, book, source) {
+  if (m.book && book.time && m.book.time && book.time < m.book.time) return false;
+  m.book = book; m.bookAt = Date.now(); m.bookSource = source;
+  tableDirty = true;
+  if (store.get().selected === m.name) scheduleDetail();
+  return true;
+}
+
 function needsCoarse(m) {
   const b = m.book;
   if (!b) return true;
@@ -274,14 +293,15 @@ function coarseSigFigsFor(m) {
 }
 
 async function fetchCoarse(m) {
+  const now = Date.now();
+  if (m.coarseRequestedAt && now - m.coarseRequestedAt < 10_000 && m.bookCoarseAt < m.coarseRequestedAt) return; // one in flight
   const n = coarseSigFigsFor(m);
-  m.coarseRequestedAt = Date.now();
+  m.coarseRequestedAt = now;
   try {
     const raw = await rest.l2Book(m.name, n);
     const book = parseBook(raw);
     book.nSigFigs = n;
-    m.bookCoarse = book;
-    m.bookCoarseAt = Date.now();
+    if (!m.bookCoarse || !(book.time < m.bookCoarse.time)) { m.bookCoarse = book; m.bookCoarseAt = Date.now(); }
     tableDirty = true;
     if (store.get().selected === m.name) scheduleDetail();
   } catch { statusDirty = true; }
@@ -310,40 +330,94 @@ function pickStalest(names, now, skip) {
 }
 
 function sweepTick() {
-  if (!universe || !rest.canSpend('l2Book')) return;
+  if (!universe || !rest.canSpend('l2Book', RATE.sweepReserve)) return;
   const now = Date.now();
   const { selected } = store.get();
   while (coarseQueue.length) {
     const m = universe.markets.get(coarseQueue.shift());
     if (m && !m.isDelisted && m.name !== selected) { fetchCoarse(m); return; }
   }
-  let [m, age] = pickStalest(visibleNames, now, selected);
+  tickCount++;
+  // Visible rows first; every n-th tick the hidden ones get their turn so a long filtered
+  // list cannot starve the rest of the universe.
+  const hiddenTurn = tickCount % SWEEP.hiddenShareEvery === 0;
+  let [m, age] = pickStalest(hiddenTurn ? liveNames : visibleNames, now, selected);
   if (!m || age < SWEEP.minRefreshMs) {
-    const [m2, age2] = pickStalest(liveNames, now, selected);
+    const [m2, age2] = pickStalest(hiddenTurn ? visibleNames : liveNames, now, selected);
     if (m2 && age2 > age) { m = m2; age = age2; }
   }
   if (!m || age < SWEEP.minRefreshMs) return;
   m.bookRequestedAt = now;
   rest.l2Book(m.name).then((raw) => {
-    if (m.bookSource === 'ws') return;
-    m.book = parseBook(raw); m.bookAt = Date.now(); m.bookSource = 'rest';
-    tableDirty = true;
+    if (m.bookSource === 'ws' && store.get().selected === m.name) return;
+    acceptBook(m, parseBook(raw), 'rest');
     if (needsCoarse(m)) coarseQueue.push(m.name);
+    else m.bookCoarse = null; // the fine book now reaches far enough on its own
   }).catch(() => { statusDirty = true; });
 }
 
 let sweepTimer = null;
 function startSweep() {
   clearInterval(sweepTimer);
-  sweepTimer = setInterval(sweepTick, document.hidden ? SWEEP.hiddenTabTickMs : SWEEP.tickMs);
+  const pace = document.hidden ? SWEEP.hiddenTabTickMs : role === 'leader' ? SWEEP.tickMs : SWEEP.followerTickMs;
+  sweepTimer = setInterval(sweepTick, pace);
 }
 document.addEventListener('visibilitychange', startSweep);
+
+function startContextRefresh() {
+  clearInterval(ctxTimer);
+  const period = role === 'leader' ? SWEEP.ctxRefreshMs : SWEEP.followerCtxRefreshMs;
+  ctxTimer = setInterval(async () => {
+    if (!rest.canSpendMany('default', universe.dexes.length)) return; // try again next period
+    const added = await refreshContexts(rest, universe);
+    if (added.length) onMarketsAdded(added);
+    buildDexChips();
+    tableDirty = true; detailDirty = true; statusDirty = true;
+  }, period);
+}
+
+function onMarketsAdded(names) {
+  liveNames = [...universe.markets.values()].filter((m) => !m.isDelisted).map((m) => m.name);
+  if (role === 'leader') for (const name of names) subscribeBbo(name);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tab etiquette: one tab per browser profile leads (full sweep + bbo feed)
+// ---------------------------------------------------------------------------
+function setRole(next) {
+  if (role === next) return;
+  role = next;
+  if (role === 'leader') for (const name of liveNames) subscribeBbo(name);
+  startSweep();
+  startContextRefresh();
+  statusDirty = true;
+}
+
+function electRole() {
+  const locks = navigator.locks;
+  if (!locks?.request) return Promise.resolve('leader');
+  const hold = () => new Promise(() => {}); // held for the lifetime of the tab
+  return new Promise((resolve) => {
+    locks.request(WS.lockName, { ifAvailable: true }, (lock) => {
+      if (lock) { resolve('leader'); return hold(); }
+      resolve('follower');
+      // Queue for leadership: resolves when the leading tab goes away.
+      locks.request(WS.lockName, () => { setRole('leader'); return hold(); }).catch(() => {});
+      return undefined;
+    }).catch(() => resolve('leader'));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Selection and streaming
 // ---------------------------------------------------------------------------
-function select(name) {
+function select(name, { userAction = false } = {}) {
   const prevName = store.get().selected;
+  if (name === prevName && selectedUnsubs.length) {
+    table.scrollTo(name);
+    if (userAction && stackedLayout.matches) $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   const prev = prevName ? universe.markets.get(prevName) : null;
   for (const u of selectedUnsubs) u();
   selectedUnsubs = [];
@@ -354,27 +428,26 @@ function select(name) {
   writeHash({ market: name });
   const m = universe.markets.get(name);
   detailDirty = true; tableDirty = true;
-  if (!m || m.isDelisted) return;
+  if (!m) return;
+  if (m.isDelisted && !store.get().showDelisted) store.set({ showDelisted: true });
+  if (m.isDelisted) return;
   selectedUnsubs.push(ws.subscribe({ type: 'l2Book', coin: name }, (data) => {
-    m.book = parseBook(data); m.bookAt = Date.now(); m.bookSource = 'ws';
-    tableDirty = true;
-    scheduleDetail();
+    acceptBook(m, parseBook(data), 'ws');
   }));
   selectedUnsubs.push(ws.subscribe({ type: 'activeAssetCtx', coin: name }, (data) => {
     const ctx = ctxFromRaw(data?.ctx, Date.now());
     if (ctx) { m.ctx = ctx; tableDirty = true; scheduleDetail(); }
   }));
-  if (!m.book) {
-    rest.l2Book(name).then((raw) => {
-      if (m.bookSource !== 'ws') { m.book = parseBook(raw); m.bookAt = Date.now(); m.bookSource = 'rest'; tableDirty = true; scheduleDetail(); }
-    }).catch(() => {}).finally(() => startSelectedPolling());
-  } else {
-    startSelectedPolling();
-  }
+  startSelectedPolling();
   table.scrollTo(name);
+  if (userAction && stackedLayout.matches) $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-/** The selected market: the fine book streams over WebSocket; aggregated books are polled. */
+/**
+ * The selected market: the WebSocket delivers l2Book snapshots only every few seconds and
+ * bbo per block, so the fine book is also refreshed over REST, together with the aggregated
+ * books the stitched view and the manual precision need.
+ */
 function startSelectedPolling() {
   clearInterval(selectedPollTimer); selectedPollTimer = null;
   const { selected } = store.get();
@@ -384,11 +457,32 @@ function startSelectedPolling() {
     if (store.get().selected !== m.name || !rest.canSpend('l2Book')) return;
     const precision = store.get().precision;
     const coarseN = coarseSigFigsFor(m);
-    if (needsCoarse(m) || (precision !== 'auto' && precision !== 'fine' && Number(precision) === coarseN)) fetchCoarse(m);
-    if (precision !== 'auto' && precision !== 'fine' && Number(precision) !== coarseN) fetchAgg(m, Number(precision));
+    if (!m.book || Date.now() - m.bookAt > SWEEP.selectedPollMs - 500) {
+      rest.l2Book(m.name).then((raw) => acceptBook(m, parseBook(raw), m.bookSource === 'ws' ? 'ws' : 'rest')).catch(() => { statusDirty = true; });
+    }
+    const manual = precision !== 'auto' && precision !== 'fine' ? Number(precision) : null;
+    if (needsCoarse(m) || manual === coarseN) fetchCoarse(m);
+    else if (m.bookCoarse) m.bookCoarse = null;
+    if (manual != null && manual !== coarseN) fetchAgg(m, manual);
+    else m.bookAgg = null;
   };
   poll();
   selectedPollTimer = setInterval(poll, SWEEP.selectedPollMs);
+}
+
+function subscribeBbo(name) {
+  if (bboUnsubs.has(name)) return;
+  const m = universe.markets.get(name);
+  if (!m || m.isDelisted) return;
+  bboUnsubs.set(name, ws.subscribe({ type: 'bbo', coin: name }, (data) => {
+    if (!m.book || !Array.isArray(data?.bbo)) return;
+    const next = applyBbo(m.book, data.bbo, Number(data.time) || 0);
+    if (next !== m.book) {
+      m.book = next;
+      tableDirty = true;
+      if (store.get().selected === m.name) scheduleDetail();
+    }
+  }));
 }
 
 function startStreams() {
@@ -401,36 +495,45 @@ function startStreams() {
         const m = universe.markets.get(coin);
         if (!m) continue;
         const v = Number(mid);
-        if (Number.isFinite(v)) { if (!m.ctx) m.ctx = {}; m.ctx.mid = v; }
+        if (Number.isFinite(v)) { if (!m.ctx) m.ctx = ctxFromRaw({}, Date.now()); m.ctx.mid = v; }
       }
       tableDirty = true;
     });
   }
-  for (const name of liveNames) {
-    const m = universe.markets.get(name);
-    ws.subscribe({ type: 'bbo', coin: name }, (data) => {
-      if (!m.book || m.bookSource === 'ws' || !Array.isArray(data?.bbo)) return;
-      m.book = applyBbo(m.book, data.bbo);
-      tableDirty = true;
-    });
-  }
+  if (role === 'leader') for (const name of liveNames) subscribeBbo(name);
 }
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 async function boot() {
-  applyTheme();
-  wireFilters();
   const banner = $('banner');
   try {
+    applyTheme();
+    table = createTable($('market-table'), {
+      onSelect: (name) => select(name, { userAction: true }),
+      onSort: (key) => {
+        const { sort } = store.get();
+        const dir = sort.key === key ? (sort.dir === 'desc' ? 'asc' : 'desc') : (key === 'name' ? 'asc' : 'desc');
+        store.set({ sort: { key, dir } });
+      },
+    });
+    detail = createDetail($('detail'), {
+      onPrecisionChange: (p) => store.set({ precision: p }),
+      onClobViewChange: (v) => store.set({ clobView: v }),
+      onCurveViewChange: (v) => store.set({ curveView: v }),
+      onSideChange: (s) => store.set({ side: s }),
+    });
+    wireFilters();
     universe = await loadUniverse(rest);
   } catch (err) {
     banner.hidden = false;
-    banner.textContent = `Could not load the market universe from ${rest.url}: ${err.message}. The page needs direct access to api.hyperliquid.xyz.`;
+    banner.textContent = `Could not start the dashboard: ${err.message}. The page needs direct access to ${rest.url}.`;
+    console.error(err);
     return;
   }
   liveNames = [...universe.markets.values()].filter((m) => !m.isDelisted).map((m) => m.name);
+  role = await electRole();
   buildDexChips();
   const s = store.get();
   let selected = s.selected && universe.markets.has(s.selected) ? s.selected : null;
@@ -441,7 +544,7 @@ async function boot() {
   startStreams();
   select(selected);
   startSweep();
-  setInterval(() => refreshContexts(rest, universe).then(() => { tableDirty = true; detailDirty = true; }), SWEEP.ctxRefreshMs);
+  startContextRefresh();
   loadPaper(PAPER.summaryCsv).then((p) => { paper = p; detailDirty = true; });
 
   store.subscribe((state, changed) => {
@@ -451,13 +554,14 @@ async function boot() {
   });
   window.addEventListener('hashchange', () => {
     const { market } = readHash();
-    if (market && market !== store.get().selected && universe.markets.has(market)) select(market);
+    if (market && market !== store.get().selected && universe.markets.has(market)) select(market, { userAction: true });
   });
   setInterval(() => {
     if (tableDirty) renderTable();
     if (detailDirty) renderDetail();
     renderStatus();
   }, 500);
+  setInterval(() => { tableDirty = true; }, SWEEP.agePulseMs); // keeps the age column ticking even when nothing else changes
   $('st-updated').textContent = `universe loaded ${new Date().toLocaleTimeString()}`;
 }
 
