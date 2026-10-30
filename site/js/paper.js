@@ -29,7 +29,7 @@ function indexCsv(text, source) {
 export async function loadPaper(paths) {
   for (const p of paths) {
     try {
-      const res = await fetch(p, { cache: 'force-cache' });
+      const res = await fetch(p); // default cache mode: revalidates, so a redeployed CSV is picked up
       if (!res.ok) continue;
       return indexCsv(await res.text(), p);
     } catch { /* try the next location */ }
